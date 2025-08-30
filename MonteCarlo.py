@@ -199,12 +199,152 @@ def dcf_valuation():
             print(f"Implied Value per Share: {equity_value / shares:,.4f}")
     print("\nNote: All cash flows are assumed to be end-of-period and in nominal terms. Ensure WACC and growth rates are consistent with currency/inflation.")
 
+def npv(rate, cashflows):
+    """
+    Net Present Value for a series of cash flows.
+    cashflows: list where index is the period (t=0,1,2,...).
+    """
+    total = 0.0
+    for t, cf in enumerate(cashflows):
+        total += cf / ((1.0 + rate) ** t)
+    return total
+
+def irr(cashflows, guess=0.1, tol=1e-7, max_iter=100):
+    """
+    Internal Rate of Return (solve NPV(rate)=0).
+    Uses a robust bracketed bisection if possible; falls back to Newton.
+    Returns None if no sign change in NPV over the search interval.
+    """
+    # Quick sign-change check on a wide bracket
+    low, high = -0.9999, 10.0
+    f_low = npv(low, cashflows)
+    f_high = npv(high, cashflows)
+    if f_low * f_high > 0:
+        # No sign change -> IRR not well-defined or multiple roots.
+        return None
+
+    # Bisection
+    for _ in range(max_iter):
+        mid = (low + high) / 2.0
+        f_mid = npv(mid, cashflows)
+        if abs(f_mid) < tol:
+            return mid
+        if f_low * f_mid < 0:
+            high = mid
+            f_high = f_mid
+        else:
+            low = mid
+            f_low = f_mid
+    return (low + high) / 2.0
+
+def payback_period(initial_outlay, cashflows):
+    """
+    Simple (undiscounted) payback period in years.
+    initial_outlay should be positive (absolute value of initial cash outflow).
+    cashflows: list of yearly inflows (t=1..N), NOT including t=0.
+    Returns float years to recover or None if never recovered.
+    """
+    cum = 0.0
+    for i, cf in enumerate(cashflows, start=1):
+        prev = cum
+        cum += cf
+        if cum >= initial_outlay:
+            # fraction of the year needed within year i
+            remain = initial_outlay - prev
+            frac = remain / cf if cf != 0 else 0.0
+            return (i - 1) + frac
+    return None
+
+def discounted_payback_period(initial_outlay, cashflows, rate):
+    """
+    Discounted payback period using discount rate.
+    cashflows are nominal; we discount each to present and accumulate.
+    Returns float years or None if never recovered.
+    """
+    cum_pv = 0.0
+    for i, cf in enumerate(cashflows, start=1):
+        pv = cf / ((1.0 + rate) ** i)
+        prev = cum_pv
+        cum_pv += pv
+        if cum_pv >= initial_outlay:
+            remain = initial_outlay - prev
+            frac = remain / pv if pv != 0 else 0.0
+            return (i - 1) + frac
+    return None
+
+def profitability_index(rate, initial_outflow, future_cashflows):
+    """
+    PI = PV of future inflows / |initial_outflow|
+    initial_outflow should be negative (e.g., -1_000_000).
+    """
+    pv_inflows = 0.0
+    for t, cf in enumerate(future_cashflows, start=1):
+        pv_inflows += cf / ((1.0 + rate) ** t)
+    denom = abs(initial_outflow)
+    return (pv_inflows / denom) if denom > 0 else float('inf')
+
+def capital_budgeting_tool():
+    """
+    Interactive Capital Budgeting: NPV, IRR, Payback, Discounted Payback, Profitability Index.
+    Prompts:
+      - Initial investment (negative number, e.g., -1000000)
+      - Number of years
+      - Annual cash flows for each year (or a base + growth generator)
+      - Discount rate
+    """
+    print("\n--- Capital Budgeting ---")
+    print("Provide inputs to compute NPV, IRR, Payback, Discounted Payback, and Profitability Index.")
+    gen = input("Enter cash flows manually (1) or base CF with constant growth (2)? Enter 1 or 2: ").strip()
+
+    # Initial outlay
+    c0 = float(input("Initial investment at t=0 (enter as negative, e.g., -1000000): ").strip())
+    years = int(input("Number of forecast years (e.g., 5): ").strip())
+    rate = float(input("Discount rate (decimal, e.g., 0.10 for 10%): ").strip())
+
+    cfs_future = []
+    if gen == "2":
+        base_cf = float(input("Base cash flow for year 1 (e.g., 250000): ").strip())
+        g = float(input("Annual growth rate for years 2..N (decimal, e.g., 0.03): ").strip())
+        cf = base_cf
+        for _ in range(1, years + 1):
+            if _ > 1:
+                cf = cf * (1.0 + g)
+            cfs_future.append(cf)
+    else:
+        print(f"Enter cash flow for each year 1..{years}")
+        for t in range(1, years + 1):
+            cf = float(input(f"  CF year {t}: ").strip())
+            cfs_future.append(cf)
+
+    # Build full cashflow series including t=0
+    cashflows = [c0] + cfs_future
+
+    # Metrics
+    npv_val = npv(rate, cashflows)
+    irr_val = irr(cashflows)
+    pb = payback_period(abs(c0), cfs_future)
+    dpb = discounted_payback_period(abs(c0), cfs_future, rate)
+    pi = profitability_index(rate, c0, cfs_future)
+
+    print("\n--- Results ---")
+    print(f"NPV @ {rate*100:.2f}%: {npv_val:,.2f}")
+    print(f"IRR: {'N/A' if irr_val is None else f'{irr_val*100:.2f}%'}")
+    print(f"Payback period (undiscounted): {'N/A' if pb is None else f'{pb:.2f} years'}")
+    print(f"Payback period (discounted): {'N/A' if dpb is None else f'{dpb:.2f} years'}")
+    print(f"Profitability Index (PI): {pi:.4f}")
+
+    if irr_val is None:
+        print("\nNote: IRR may be undefined if cash flows do not change sign once (multiple or no real roots).")
+    if npv_val < 0:
+        print("Warning: NPV is negative at the selected discount rate.")
+
 if __name__ == "__main__":
     while True:
         print("\n=== Finance Toolbox ===")
         print("1) Monte Carlo (GBM) Portfolio Simulator")
         print("2) CAPM Expected Return")
         print("3) DCF Valuation (with Terminal Value)")
+        print("4) Capital Budgeting (NPV, IRR, Payback, PI)")
         print("q) Quit")
         choice = input("Choose an option: ").strip().lower()
 
@@ -287,6 +427,9 @@ if __name__ == "__main__":
 
         elif choice == "3":
             dcf_valuation()
+
+        elif choice == "4":
+            capital_budgeting_tool()
 
         elif choice == "q":
             print("Goodbye!")
