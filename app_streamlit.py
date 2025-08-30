@@ -9,10 +9,10 @@ from MonteCarlo import (
     simulate_gbm_path_series
 )
 
-st.set_page_config(page_title="Finance Toolbox", layout="wide")
+st.set_page_config(page_title="Finance Toolbox", layout="wide", initial_sidebar_state="expanded")
 
 st.title("Finance Toolbox")
-tool = st.sidebar.selectbox("Choose a tool", ["Monte Carlo (GBM)", "CAPM"])
+tool = st.sidebar.radio("Choose a tool", ("Monte Carlo (GBM)", "CAPM", "DCF Valuation"), index=0)
 
 if tool == "Monte Carlo (GBM)":
     st.header("Monte Carlo (GBM) Portfolio Simulator")
@@ -97,3 +97,70 @@ elif tool == "CAPM":
     st.write("### Result")
     st.write(f"**Expected asset return E[Ri] = Rf + β·(E[Rm]-Rf) = {er_i:.4f} ({er_i*100:.2f}%)**")
     st.caption(f"Rf={rf:.4f}, E[Rm]={er_m:.4f}, MRP={mrp:.4f}, β={beta:.2f}")
+
+elif tool == "DCF Valuation":
+    st.header("DCF Valuation (with Terminal Value)")
+
+    # Input mode
+    mode = st.radio("FCF input mode", ["Manual per year", "Base FCF + constant growth"], horizontal=True)
+
+    # Core parameters
+    colA, colB, colC = st.columns(3)
+    with colA:
+        wacc = st.number_input("Discount rate WACC (decimal)", value=0.09, step=0.005, format="%.4f")
+    with colB:
+        years = st.number_input("Forecast horizon (years)", min_value=1, value=5, step=1)
+    with colC:
+        g_term = st.number_input("Terminal growth g (decimal)", value=0.025, step=0.0025, format="%.4f")
+
+    # Gather FCFs
+    fcfs = []
+    if mode == "Manual per year":
+        st.subheader("Enter Free Cash Flow for each year")
+        for t in range(1, int(years) + 1):
+            f = st.number_input(f"FCF year {t}", value=1_000_000.0, step=50_000.0, key=f"fcf_{t}")
+            fcfs.append(float(f))
+    else:
+        st.subheader("Base FCF + constant growth")
+        base_fcf = st.number_input("Base (current) FCF (year 0)", value=1_000_000.0, step=50_000.0)
+        g_fore = st.number_input("Annual growth rate for forecast years (decimal)", value=0.06, step=0.005, format="%.4f")
+        f = base_fcf
+        for _ in range(1, int(years) + 1):
+            f = f * (1.0 + g_fore)
+            fcfs.append(float(f))
+
+    warn = (g_term >= wacc)
+    if warn:
+        st.warning("Terminal growth must be **less** than WACC for the Gordon Growth model to be finite.")
+
+    # Compute PVs
+    pv_fcfs = 0.0
+    for t, f in enumerate(fcfs, start=1):
+        pv_fcfs += f / ((1.0 + wacc) ** t)
+
+    fcf_N = fcfs[-1] if fcfs else 0.0
+    fcf_N_plus_1 = fcf_N * (1.0 + g_term)
+    tv_N = (fcf_N_plus_1 / (wacc - g_term)) if (wacc > g_term) else float('inf')
+    pv_tv = (tv_N / ((1.0 + wacc) ** int(years))) if (wacc > g_term) else float('inf')
+    enterprise_value = pv_fcfs + pv_tv
+
+    st.subheader("Results")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("PV of forecast FCFs", f"{pv_fcfs:,.2f}")
+    c2.metric(f"Terminal value at year {int(years)}", "∞" if tv_N == float('inf') else f"{tv_N:,.2f}")
+    c3.metric("PV of terminal value", "∞" if pv_tv == float('inf') else f"{pv_tv:,.2f}")
+    st.metric("Enterprise Value (EV)", "∞" if enterprise_value == float('inf') else f"{enterprise_value:,.2f}")
+
+    st.caption("All cash flows assumed end-of-period, nominal. Ensure WACC and growth rates are consistent with currency/inflation.")
+
+    # Optional equity adjustments
+    with st.expander("Adjust to Equity Value (optional)"):
+        do_adj = st.checkbox("Compute Equity Value and Per-share")
+        if do_adj and enterprise_value not in (float('inf'), float('nan')):
+            cash = st.number_input("Add cash & equivalents", value=0.0, step=10000.0)
+            debt = st.number_input("Subtract total debt", value=0.0, step=10000.0)
+            shares = st.number_input("Shares outstanding", value=0.0, step=1000.0)
+            equity_value = enterprise_value + cash - debt
+            st.write(f"**Equity Value:** {equity_value:,.2f}")
+            if shares > 0:
+                st.write(f"**Implied Value per Share:** {equity_value / shares:,.4f}")

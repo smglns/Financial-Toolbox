@@ -131,11 +131,80 @@ def capm_expected_return():
         "er_i": er_i
     }
 
+def dcf_valuation():
+    """
+    Discounted Cash Flow (DCF) valuation with a terminal value.
+    Supports two ways to enter cash flows:
+      (1) Manual entry of each year's FCF
+      (2) Start from a base FCF and grow it by a constant rate for N years
+    Terminal value uses Gordon Growth: TV_N = FCF_{N+1} / (WACC - g_term)
+    Enterprise Value = sum(PV of FCFs) + PV(TV_N)
+    Then optionally adjust for net debt and shares to get per-share value.
+    """
+    print("\n--- DCF Valuation (with Terminal Value) ---")
+    mode = input("Enter FCFs manually (1) or use base FCF + growth (2)? Enter 1 or 2: ").strip()
+
+    # Discount rate (WACC) and horizon
+    wacc = float(input("Discount rate WACC (decimal, e.g., 0.09 for 9%): ").strip())
+    years = int(input("Forecast horizon in years (e.g., 5): ").strip())
+
+    fcfs = []
+    if mode == "1":
+        print(f"Enter Free Cash Flow for each year 1..{years}")
+        for t in range(1, years+1):
+            f = float(input(f"  FCF year {t}: ").strip())
+            fcfs.append(f)
+    else:
+        base_fcf = float(input("Base (current) FCF (year 0), e.g., 1000000: ").strip())
+        g = float(input("Annual growth rate for forecast years (decimal, e.g., 0.06 for 6%): ").strip())
+        # Generate forecast FCFs for years 1..N
+        f = base_fcf
+        for _ in range(1, years+1):
+            f = f * (1.0 + g)
+            fcfs.append(f)
+
+    # Terminal growth
+    g_term = float(input("Terminal growth rate g (decimal, e.g., 0.025 for 2.5%): ").strip())
+    if g_term >= wacc:
+        print("WARNING: Terminal growth must be less than WACC for Gordon model to be finite.")
+
+    # Present value of forecast FCFs
+    pv_fcfs = 0.0
+    for t, f in enumerate(fcfs, start=1):
+        pv_fcfs += f / ((1.0 + wacc) ** t)
+
+    # Terminal value at year N (value as of end of year N), discounted back to present
+    fcf_N = fcfs[-1] if fcfs else 0.0
+    fcf_N_plus_1 = fcf_N * (1.0 + g_term)
+    tv_N = fcf_N_plus_1 / (wacc - g_term) if wacc > g_term else float('inf')
+    pv_tv = tv_N / ((1.0 + wacc) ** years) if wacc > g_term else float('inf')
+
+    enterprise_value = pv_fcfs + pv_tv
+
+    print("\n--- DCF Results ---")
+    print(f"PV of forecast FCFs: {pv_fcfs:,.2f}")
+    print(f"Terminal value at year {years}: {tv_N:,.2f}")
+    print(f"PV of terminal value: {pv_tv:,.2f}")
+    print(f"Enterprise Value (EV): {enterprise_value:,.2f}")
+
+    # Optional adjustments to equity value and per share
+    adj = input("Adjust to Equity Value? (y/n): ").strip().lower()
+    if adj == "y":
+        cash = float(input("  Add cash & equivalents (enter 0 if none): ").strip() or "0")
+        debt = float(input("  Subtract total debt (enter 0 if none): ").strip() or "0")
+        shares = float(input("  Shares outstanding (enter 0 to skip per-share): ").strip() or "0")
+        equity_value = enterprise_value + cash - debt
+        print(f"\nEquity Value: {equity_value:,.2f}")
+        if shares > 0:
+            print(f"Implied Value per Share: {equity_value / shares:,.4f}")
+    print("\nNote: All cash flows are assumed to be end-of-period and in nominal terms. Ensure WACC and growth rates are consistent with currency/inflation.")
+
 if __name__ == "__main__":
     while True:
         print("\n=== Finance Toolbox ===")
         print("1) Monte Carlo (GBM) Portfolio Simulator")
         print("2) CAPM Expected Return")
+        print("3) DCF Valuation (with Terminal Value)")
         print("q) Quit")
         choice = input("Choose an option: ").strip().lower()
 
@@ -215,6 +284,9 @@ if __name__ == "__main__":
 
         elif choice == "2":
             capm_expected_return()
+
+        elif choice == "3":
+            dcf_valuation()
 
         elif choice == "q":
             print("Goodbye!")
