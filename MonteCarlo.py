@@ -1,5 +1,87 @@
-import random, math
+import random, math, os, json, hashlib, getpass
 from statistics import mean, stdev, median
+
+
+USERS_DB = os.path.join(os.path.dirname(__file__), "users.json")
+
+def _load_users():
+    
+    if not os.path.exists(USERS_DB):
+        return {}
+    try:
+        with open(USERS_DB, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+def _save_users(data: dict):
+    
+    tmp_path = USERS_DB + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp_path, USERS_DB)
+
+def _hash_password(password: str, salt: str) -> str:
+    
+    h = hashlib.sha256()
+    h.update((salt + password).encode("utf-8"))
+    return h.hexdigest()
+
+def _create_user(username: str, password: str):
+    users = _load_users()
+    if username in users:
+        raise ValueError("Username already exists.")
+   
+    salt = hashlib.sha256(os.urandom(16)).hexdigest()[:32]
+    users[username] = {
+        "salt": salt,
+        "pwd_hash": _hash_password(password, salt)
+    }
+    _save_users(users)
+
+def _verify_user(username: str, password: str) -> bool:
+    users = _load_users()
+    rec = users.get(username)
+    if not rec:
+        return False
+    return _hash_password(password, rec["salt"]) == rec["pwd_hash"]
+
+def login_prompt():
+    
+    print("\n=== Login ===")
+    while True:
+        choice = input("Do you want to (l)ogin or (r)egister? ").strip().lower()
+        if choice not in {"l", "r"}:
+            print("Please enter 'l' to login or 'r' to register.")
+            continue
+
+        if choice == "r":
+            username = input("Choose a username: ").strip()
+            if not username:
+                print("Username cannot be empty.")
+                continue
+            
+            pwd1 = getpass.getpass("Choose a password: ").strip()
+            pwd2 = getpass.getpass("Confirm password: ").strip()
+            if pwd1 != pwd2:
+                print("Passwords do not match. Try again.")
+                continue
+            try:
+                _create_user(username, pwd1)
+                print("Registration successful. You can now log in.")
+            except ValueError as e:
+                print(str(e))
+            continue  
+
+        
+        username = input("Username: ").strip()
+        pwd = getpass.getpass("Password: ").strip()
+        if _verify_user(username, pwd):
+            print(f"Welcome, {username}!")
+            return username
+        else:
+            print("Invalid username or password. Try again.")
 
 # Visualization (optional)
 try:
@@ -16,11 +98,7 @@ def standard_normal():
     return z
 
 def simulate_gbm_one_path(S0, mu, sigma, years, steps_per_year):
-    """
-    Simulate a single GBM path and return final price after 'years'.
-    Uses the exact discretized GBM step:
-      S_{t+dt} = S_t * exp((mu - 0.5*sigma^2) dt + sigma * sqrt(dt) * Z)
-    """
+   
     dt = 1.0 / steps_per_year
     steps = int(years * steps_per_year)
     S = S0
@@ -30,9 +108,7 @@ def simulate_gbm_one_path(S0, mu, sigma, years, steps_per_year):
     return S
 
 def simulate_gbm_path_series(S0, mu, sigma, years, steps_per_year):
-    """
-    Simulate a single GBM path and return the full series [S0, S1, ..., S_T].
-    """
+    
     dt = 1.0 / steps_per_year
     steps = int(years * steps_per_year)
     path = [S0]
@@ -44,19 +120,14 @@ def simulate_gbm_path_series(S0, mu, sigma, years, steps_per_year):
     return path
 
 def monte_carlo_gbm(S0, mu, sigma, years, steps_per_year=252, n_simulations=10000, seed=None):
-    """
-    Run Monte Carlo using GBM for n_simulations and return list of terminal values.
-    steps_per_year defaults to 252 (trading days) for finer resolution.
-    """
+    
     if seed is not None:
         random.seed(seed)
     results = []
     for i in range(n_simulations):
         final_price = simulate_gbm_one_path(S0, mu, sigma, years, steps_per_year)
         results.append(final_price)
-        # optional: print progress every so often
-        # if (i+1) % (n_simulations//10 or 1) == 0:
-        #     print(f"Sim {i+1}/{n_simulations} done")
+        
     return results
 
 def summarize_results(results, S0, threshold=None, var_level=0.05):
@@ -85,15 +156,14 @@ def summarize_results(results, S0, threshold=None, var_level=0.05):
         "95%": p95
     }
 
-    # Value at Risk (loss relative to S0): VaR at var_level
-    # VaR = S0 - quantile(var_level)
+    
     quantile_index = int(var_level * n)
     quantile_val = results_sorted[quantile_index] if n>0 else None
     var = None
     if quantile_val is not None:
         var = S0 - quantile_val
 
-    # prob below threshold if provided
+   
     prob_below = None
     if threshold is not None:
         count = sum(1 for x in results if x < threshold)
@@ -104,9 +174,9 @@ def summarize_results(results, S0, threshold=None, var_level=0.05):
 def capm_expected_return():
     
     print("\n--- CAPM: Expected Return Calculator ---")
-    # Risk-free rate
+    
     rf = float(input("Risk-free rate (decimal, e.g., 0.03 for 3%): ").strip())
-    # Choose to enter market expected return or market risk premium
+
     mode = input("Provide (1) market expected return E[Rm] or (2) market risk premium (E[Rm]-Rf)? Enter 1 or 2: ").strip()
     if mode == "1":
         er_m = float(input("Expected market return E[Rm] (decimal, e.g., 0.08 for 8%): ").strip())
@@ -144,7 +214,7 @@ def dcf_valuation():
     print("\n--- DCF Valuation (with Terminal Value) ---")
     mode = input("Enter FCFs manually (1) or use base FCF + growth (2)? Enter 1 or 2: ").strip()
 
-    # Discount rate (WACC) and horizon
+
     wacc = float(input("Discount rate WACC (decimal, e.g., 0.09 for 9%): ").strip())
     years = int(input("Forecast horizon in years (e.g., 5): ").strip())
 
@@ -157,23 +227,23 @@ def dcf_valuation():
     else:
         base_fcf = float(input("Base (current) FCF (year 0), e.g., 1000000: ").strip())
         g = float(input("Annual growth rate for forecast years (decimal, e.g., 0.06 for 6%): ").strip())
-        # Generate forecast FCFs for years 1..N
+
         f = base_fcf
         for _ in range(1, years+1):
             f = f * (1.0 + g)
             fcfs.append(f)
 
-    # Terminal growth
+
     g_term = float(input("Terminal growth rate g (decimal, e.g., 0.025 for 2.5%): ").strip())
     if g_term >= wacc:
         print("WARNING: Terminal growth must be less than WACC for Gordon model to be finite.")
 
-    # Present value of forecast FCFs
+
     pv_fcfs = 0.0
     for t, f in enumerate(fcfs, start=1):
         pv_fcfs += f / ((1.0 + wacc) ** t)
 
-    # Terminal value at year N (value as of end of year N), discounted back to present
+
     fcf_N = fcfs[-1] if fcfs else 0.0
     fcf_N_plus_1 = fcf_N * (1.0 + g_term)
     tv_N = fcf_N_plus_1 / (wacc - g_term) if wacc > g_term else float('inf')
@@ -187,7 +257,7 @@ def dcf_valuation():
     print(f"PV of terminal value: {pv_tv:,.2f}")
     print(f"Enterprise Value (EV): {enterprise_value:,.2f}")
 
-    # Optional adjustments to equity value and per share
+
     adj = input("Adjust to Equity Value? (y/n): ").strip().lower()
     if adj == "y":
         cash = float(input("  Add cash & equivalents (enter 0 if none): ").strip() or "0")
@@ -215,15 +285,15 @@ def irr(cashflows, guess=0.1, tol=1e-7, max_iter=100):
     Uses a robust bracketed bisection if possible; falls back to Newton.
     Returns None if no sign change in NPV over the search interval.
     """
-    # Quick sign-change check on a wide bracket
+
     low, high = -0.9999, 10.0
     f_low = npv(low, cashflows)
     f_high = npv(high, cashflows)
     if f_low * f_high > 0:
-        # No sign change -> IRR not well-defined or multiple roots.
+
         return None
 
-    # Bisection
+
     for _ in range(max_iter):
         mid = (low + high) / 2.0
         f_mid = npv(mid, cashflows)
@@ -249,7 +319,7 @@ def payback_period(initial_outlay, cashflows):
         prev = cum
         cum += cf
         if cum >= initial_outlay:
-            # fraction of the year needed within year i
+
             remain = initial_outlay - prev
             frac = remain / cf if cf != 0 else 0.0
             return (i - 1) + frac
@@ -316,10 +386,10 @@ def capital_budgeting_tool():
             cf = float(input(f"  CF year {t}: ").strip())
             cfs_future.append(cf)
 
-    # Build full cashflow series including t=0
+
     cashflows = [c0] + cfs_future
 
-    # Metrics
+
     npv_val = npv(rate, cashflows)
     irr_val = irr(cashflows)
     pb = payback_period(abs(c0), cfs_future)
@@ -339,8 +409,9 @@ def capital_budgeting_tool():
         print("Warning: NPV is negative at the selected discount rate.")
 
 if __name__ == "__main__":
+    current_user = login_prompt()
     while True:
-        print("\n=== Finance Toolbox ===")
+        print(f"\n=== Finance Toolbox (user: {current_user}) ===")
         print("1) Monte Carlo (GBM) Portfolio Simulator")
         print("2) CAPM Expected Return")
         print("3) DCF Valuation (with Terminal Value)")
@@ -349,12 +420,10 @@ if __name__ == "__main__":
         choice = input("Choose an option: ").strip().lower()
 
         if choice == "1":
-            # Interactive inputs for Monte Carlo GBM
             S0 = float(input("Initial portfolio value (e.g. 10000): "))
             mu_input_mode = input("Is your expected return (mu) a (1) continuous rate or (2) discrete percent? Enter 1 or 2: ").strip()
             mu_raw = float(input("Expected annual return value (e.g. 0.07 for 7%): "))
             if mu_input_mode == "2":
-                # convert discrete g to continuous log-return
                 mu = math.log(1.0 + mu_raw)
             else:
                 mu = mu_raw
@@ -387,26 +456,21 @@ if __name__ == "__main__":
             if threshold is not None:
                 print(f"Probability final value < {threshold}: {prob_below:.4f}")
 
-            # --- Optional Visualization ---
             if _HAS_MPL:
                 viz_choice = input("\nShow visuals? (y/n): ").strip().lower()
                 if viz_choice == "y":
                     try:
-                        # Ask how many sample paths to draw for the right subplot
                         num_paths = input("How many sample paths to plot? (e.g., 20): ").strip()
                         num_paths = int(num_paths) if num_paths else 20
                         num_paths = max(1, min(num_paths, 100))  # cap for readability
                         
-                        # Create a single figure with two subplots side-by-side
                         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
                         
-                        # Left: histogram of terminal values
                         ax1.hist(results, bins=50, edgecolor="black")
                         ax1.set_title(f"Final Values (T={years} yrs, n={n_simulations})")
                         ax1.set_xlabel("Final Portfolio Value")
                         ax1.set_ylabel("Frequency")
                         
-                        # Right: sample GBM paths
                         for _ in range(num_paths):
                             path = simulate_gbm_path_series(S0, mu, sigma, years, steps_per_year)
                             ax2.plot(path, alpha=0.6)

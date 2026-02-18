@@ -1,0 +1,14 @@
+{
+  "Samat": {
+    "salt": "4ce7874403364190ec0b052195f26f0f",
+    "pwd_hash": "b50602dbca7162768a19ca4a1f8a874b7f7c18acdd375c87300dbb30d157a04d"
+  },
+  "Smglns": {
+    "salt": "7c31c3e7b9b26887d6a3612fff412ba6",
+    "pwd_hash": "e955ab6128d727d8f322b331d3e0948909122c035b8e8c5362f0042c5d7d394e"
+  },
+  "Smglns.": {
+    "salt": "7423237258c2dbb58d872ad6856f4cd7",
+    "pwd_hash": "ae8b50af76d5fe8ab2716439513da0d508795e3d814a1274ea4abe2f880b7e8e"
+  }
+}

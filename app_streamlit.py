@@ -1,18 +1,115 @@
-# app_streamlit.py
-import math
+import math, os, json, hashlib
 import streamlit as st
 import matplotlib.pyplot as plt
 
-# import your existing functions
+
 from MonteCarlo import (
     monte_carlo_gbm, summarize_results,
     simulate_gbm_path_series,
     npv, irr, payback_period, discounted_payback_period, profitability_index
 )
 
+
+USERS_DB = os.path.join(os.path.dirname(__file__), "users.json")
+
+def _load_users():
+    if not os.path.exists(USERS_DB):
+        return {}
+    try:
+        with open(USERS_DB, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+def _save_users(data: dict):
+    tmp_path = USERS_DB + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp_path, USERS_DB)
+
+def _hash_password(password: str, salt: str) -> str:
+    h = hashlib.sha256()
+    h.update((salt + password).encode("utf-8"))
+    return h.hexdigest()
+
+def _create_user(username: str, password: str):
+    users = _load_users()
+    if username in users:
+        raise ValueError("Username already exists.")
+    salt = hashlib.sha256(os.urandom(16)).hexdigest()[:32]
+    users[username] = {
+        "salt": salt,
+        "pwd_hash": _hash_password(password, salt)
+    }
+    _save_users(users)
+
+def _verify_user(username: str, password: str) -> bool:
+    users = _load_users()
+    rec = users.get(username)
+    if not rec:
+        return False
+    return _hash_password(password, rec["salt"]) == rec["pwd_hash"]
+
+def render_auth() -> bool:
+    """
+    Render login/register UI.
+    Returns True if a user is authenticated in st.session_state.
+    """
+    st.header("Account")
+    tab_login, tab_register = st.tabs(["Login", "Register"])
+
+    with tab_login:
+        with st.form("login_form", clear_on_submit=False):
+            uname = st.text_input("Username", key="login_user")
+            pwd = st.text_input("Password", type="password", key="login_pwd")
+            submit = st.form_submit_button("Log in")
+            if submit:
+                if _verify_user(uname.strip(), pwd.strip()):
+                    st.session_state.current_user = uname.strip()
+                    st.success(f"Welcome, {st.session_state.current_user}!")
+                else:
+                    st.error("Invalid username or password.")
+
+    with tab_register:
+        with st.form("register_form", clear_on_submit=False):
+            runame = st.text_input("Choose a username", key="reg_user")
+            rp1 = st.text_input("Choose a password", type="password", key="reg_pwd1")
+            rp2 = st.text_input("Confirm password", type="password", key="reg_pwd2")
+            rsubmit = st.form_submit_button("Create account")
+            if rsubmit:
+                if not runame.strip():
+                    st.error("Username cannot be empty.")
+                elif rp1 != rp2:
+                    st.error("Passwords do not match.")
+                else:
+                    try:
+                        _create_user(runame.strip(), rp1)
+                        st.success("Registration successful. You can now log in.")
+                    except ValueError as e:
+                        st.error(str(e))
+
+    return bool(st.session_state.get("current_user"))
+
 st.set_page_config(page_title="Finance Toolbox", layout="wide", initial_sidebar_state="expanded")
 
-st.title("Finance Toolbox")
+if "current_user" not in st.session_state:
+    st.session_state.current_user = None
+
+if not st.session_state.current_user:
+    st.title("Finance Toolbox")
+    if render_auth():
+        st.rerun()
+    st.stop()
+
+st.title(f"Finance Toolbox — {st.session_state.current_user}")
+
+with st.sidebar:
+    st.write(f"**Logged in as:** {st.session_state.current_user}")
+    if st.button("Log out"):
+        st.session_state.current_user = None
+        st.rerun()
+
 tool = st.sidebar.radio("Choose a tool", ("Monte Carlo (GBM)", "CAPM", "DCF Valuation", "Capital Budgeting"), index=0)
 
 if tool == "Monte Carlo (GBM)":
@@ -34,7 +131,6 @@ if tool == "Monte Carlo (GBM)":
 
     threshold = st.number_input("Optional threshold to check P(final value < threshold)", min_value=0.0, value=0.0, step=100.0)
 
-    # convert to GBM μ if user gave discrete %
     mu = math.log(1.0 + mu_raw) if mu_mode == "Discrete (%)" else mu_raw
     seed_val = int(seed) if use_seed else None
 
@@ -42,14 +138,12 @@ if tool == "Monte Carlo (GBM)":
         results = monte_carlo_gbm(S0, mu, sigma, years, int(steps_per_year), int(n_simulations), seed_val)
         summary, var, prob_below = summarize_results(results, S0, threshold if threshold > 0 else None, var_level=0.05)
 
-        # --- Summary cards
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Mean terminal value", f"{summary['mean']:.2f}")
         m2.metric("Median", f"{summary['median']:.2f}")
         m3.metric("Std dev", f"{summary['std']:.2f}")
         m4.metric("5% VaR (vs S0)", f"{var:.2f}" if var is not None else "—")
 
-        # Percentiles table
         st.subheader("Percentiles")
         st.write({
             "5%": f"{summary['5%']:.2f}",
@@ -62,16 +156,16 @@ if tool == "Monte Carlo (GBM)":
         if threshold > 0:
             st.info(f"Probability(final value < {threshold:.2f}) = **{prob_below:.4f}**")
 
-        # --- Plots: histogram + sample paths side-by-side
+
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
 
-        # Left: histogram
+
         ax1.hist(results, bins=50)
         ax1.set_title(f"Final Values (T={years} yrs, n={n_simulations})")
         ax1.set_xlabel("Final Portfolio Value")
         ax1.set_ylabel("Frequency")
 
-        # Right: sample paths
+
         num_paths = 20
         for _ in range(num_paths):
             path = simulate_gbm_path_series(S0, mu, sigma, years, int(steps_per_year))
@@ -102,10 +196,10 @@ elif tool == "CAPM":
 elif tool == "DCF Valuation":
     st.header("DCF Valuation (with Terminal Value)")
 
-    # Input mode
+
     mode = st.radio("FCF input mode", ["Manual per year", "Base FCF + constant growth"], horizontal=True)
 
-    # Core parameters
+
     colA, colB, colC = st.columns(3)
     with colA:
         wacc = st.number_input("Discount rate WACC (decimal)", value=0.09, step=0.005, format="%.4f")
@@ -114,7 +208,7 @@ elif tool == "DCF Valuation":
     with colC:
         g_term = st.number_input("Terminal growth g (decimal)", value=0.025, step=0.0025, format="%.4f")
 
-    # Gather FCFs
+
     fcfs = []
     if mode == "Manual per year":
         st.subheader("Enter Free Cash Flow for each year")
@@ -134,7 +228,7 @@ elif tool == "DCF Valuation":
     if warn:
         st.warning("Terminal growth must be **less** than WACC for the Gordon Growth model to be finite.")
 
-    # Compute PVs
+
     pv_fcfs = 0.0
     for t, f in enumerate(fcfs, start=1):
         pv_fcfs += f / ((1.0 + wacc) ** t)
@@ -154,7 +248,7 @@ elif tool == "DCF Valuation":
 
     st.caption("All cash flows assumed end-of-period, nominal. Ensure WACC and growth rates are consistent with currency/inflation.")
 
-    # Optional equity adjustments
+
     with st.expander("Adjust to Equity Value (optional)"):
         do_adj = st.checkbox("Compute Equity Value and Per-share")
         if do_adj and enterprise_value not in (float('inf'), float('nan')):
@@ -195,11 +289,10 @@ elif tool == "Capital Budgeting":
                 cf = cf * (1.0 + g)
             cfs_future.append(float(cf))
 
-    # Build full cash flow series including t=0
+
     cashflows = [float(c0)] + cfs_future
 
     if st.button("Calculate Metrics"):
-        # Metrics
         npv_val = npv(rate, cashflows)
         irr_val = irr(cashflows)
         pb = payback_period(abs(c0), cfs_future)
@@ -218,7 +311,6 @@ elif tool == "Capital Budgeting":
 
         st.caption("Notes: IRR may be undefined if cash flows do not change sign once. NPV/PI use the discount rate above. Cash flows are assumed end-of-period.")
 
-        # Optional table of cash flows and discounted cash flows
         try:
             import pandas as pd
             rows = []
